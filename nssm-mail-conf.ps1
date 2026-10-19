@@ -15,7 +15,8 @@ $scriptArgs = ('-NoProfile -ExecutionPolicy Bypass -File "{0}" ' -f $script) +
               '-TestTo "test-user@example.com" ' +
               '-SendToAgents -UseEws ' +
               '-Cc "manager1@example.com","support-group@example.com" ' +
-              '-IsccTo "ops1@example.com","ops2@example.com" -IsccCc "teamlead@example.com"'
+              '-IsccTo "ops1@example.com","ops2@example.com" -IsccCc "teamlead@example.com" ' +
+              '-BurstSeconds 60 -DedupeMinutes 60'
 
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 

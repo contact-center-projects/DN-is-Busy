@@ -8,7 +8,7 @@
     Retries of the same call (same ConnID + Agent) within -DedupeMinutes produce only one mail.
 
 .EXAMPLE
-    .\Watch-DnBusyMail.ps1 -SharePath "\\URS-SERVER\DnBusy" -From "support-group@example.com" -TestTo "test-user@example.com"
+    .\Watch-DnBusyMail.ps1 -SharePath "\\PRIMARY-SERVER\DnBusy" -From "support-group@example.com" -TestTo "test-user@example.com"
 #>
 [CmdletBinding()]     # enables -Verbose (agent/manager lookup details are shown only with it)
 param(
@@ -34,6 +34,7 @@ param(
     [int]$MinOccurrences = 2,            # mail only after the same DN is seen this many times within -WithinMinutes (1 = mail on the first occurrence)
     [int]$WithinMinutes = 10,
     [int]$DedupeMinutes = 0,            # 0 = one mail per agent per day; >0 = one mail per agent per that many minutes
+    [int]$BurstSeconds = 0,             # ignore repeated detections for the same DN within this many seconds of the first (0 = disabled)
     [string]$StateFolder = "$env:ProgramData\DnBusyMail"   # remembers who was already mailed, so a restart does not re-send
 )
 
@@ -333,7 +334,8 @@ $note
     Write-Host ("{0} mail -> {1} cc {2} ({3}, ConnID {4})" -f (Get-Date -Format "HH:mm:ss"), ($to -join ';'), ($cc -join ';'), $kind, $f.ConnID)
 }
 
-$script:Hits = @{}       # counting key -> times the error was seen (in memory; lost on restart)
+$script:Hits  = @{}       # counting key -> times the error was seen (in memory; lost on restart)
+$script:Burst = @{}       # DN key -> datetime of first detection in current burst
 
 # Records one occurrence; returns $true once the key has been seen -MinOccurrences times within -WithinMinutes.
 function Test-Threshold([string]$Key, [datetime]$Now) {
@@ -358,6 +360,14 @@ function Handle-Line([string]$Line) {
         $key = if ($f.Agent) { $f.Agent.ToLower() } else { "conn:$($f.ConnID)" }
     }
     $now = Get-Date
+    if ($BurstSeconds -gt 0) {
+        $burstKey = if ($f.Type -eq 'ISCC') { "iscc:$($f.DN)" } else { $f.DN }
+        if ($script:Burst.ContainsKey($burstKey)) {
+            if (($now - $script:Burst[$burstKey]).TotalSeconds -lt $BurstSeconds) { return }
+            else { $script:Burst.Remove($burstKey) }
+        }
+        $script:Burst[$burstKey] = $now
+    }
     if ($script:Sent.ContainsKey($key)) {
         if ($DedupeMinutes -le 0 -or ($now - $script:Sent[$key]).TotalMinutes -lt $DedupeMinutes) { return }
     }
@@ -404,8 +414,9 @@ while ($true) {
         $fileName = "{0}_{1}.log" -f $Prefix, $dayStr
         if ($script:Day -ne $dayStr) {
             $first = ($null -eq $script:Day)
-            $script:Day  = $dayStr
-            $script:Hits = @{}
+            $script:Day   = $dayStr
+            $script:Hits  = @{}
+            $script:Burst = @{}
             $script:Sent = Load-State          # new day (or first start): who was already mailed today
             foreach ($sh in $SharePath) {
                 $p = Join-Path $sh $fileName
